@@ -1,4 +1,5 @@
 import { Server } from "socket.io";
+import { encryptText, decryptText } from "../utils/crypto.js";
 import { Message } from "../models/message.model.js";
 
 export const initializeSocket = (server) => {
@@ -25,25 +26,29 @@ export const initializeSocket = (server) => {
       userActivities.set(userId, activity);
       io.emit("activity_updated", { userId, activity });
     });
-    socket.on("send_message", async (data) => {
+
+    socket.on("send_message", async ({ senderId, receiverId, content }) => {
       try {
-        const { senderId, receiverId, content } = data;
+        const encrypted = encryptText(content);
         const message = await Message.create({
           senderId,
           receiverId,
-          content,
+          ...encrypted,
         });
-        // send to receiver in realtime, if they're online
+        const decryptedMessage = {
+          ...message.toObject(),
+          content: decryptText(message),
+        };
         const receiverSocketId = userSockets.get(receiverId);
         if (receiverSocketId) {
-          io.to(receiverSocketId).emit("receive_message", message);
+          io.to(receiverSocketId).emit("receive_message", decryptedMessage);
         }
-        socket.emit("message_sent", message);
-      } catch (error) {
-        console.error("Message error:", error);
-        socket.emit("message_error", error.message);
+        socket.emit("message_sent", decryptedMessage);
+      } catch (err) {
+        socket.emit("message_error", err.message);
       }
     });
+
     socket.on("disconnect", () => {
       let disconnectedUserId;
       for (const [userId, socketId] of userSockets.entries()) {
